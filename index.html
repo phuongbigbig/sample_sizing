@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sample Size Navigator — Evidence-Based Guidance for Biology & Genomics Research</title>
+<meta name="description" content="Interactive tool for determining appropriate sample sizes in RNA-seq, GWAS, population genetics, microbiome, and qualitative research.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+  body { transition: background 0.3s ease; }
+  #root { min-height: 100vh; }
+</style>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useMemo, createContext, useContext } = React;
+
+/* ===== DUAL THEME ===== */
+const LIGHT = {
+  bg:"#f4f2ee", surface:"#ffffff", surfaceAlt:"#edeae4",
+  border:"#d6d1c9", borderActive:"#5a6f4e", accent:"#5a6f4e",
+  accentLight:"#e8ede5", accentText:"#4a5d40",
+  text:"#2c2c2c", textSecondary:"#5c5c5c", textTertiary:"#8a8a8a",
+  tagGreen:"#3d7a4a", tagGreenBg:"#e6f0e8",
+  tagAmber:"#9a6b1e", tagAmberBg:"#f5edd8",
+  tagRed:"#a8423a", tagRedBg:"#f5e3e1",
+  tagPurple:"#6b5b95", tagPurpleBg:"#eee8f5",
+  refBg:"#f9f8f5", refBorder:"#e5e2dc",
+  toggleBg:"#e0ddd6", toggleKnob:"#ffffff",
+};
+const DARK = {
+  bg:"#0f1219", surface:"#1a1f2e", surfaceAlt:"#232a3a",
+  border:"#2e3650", borderActive:"#6d9a5b", accent:"#7cb668",
+  accentLight:"#1e2e1e", accentText:"#8fcc7a",
+  text:"#e2e8f0", textSecondary:"#a0aec0", textTertiary:"#6b7a90",
+  tagGreen:"#6fcf6a", tagGreenBg:"rgba(111,207,106,0.12)",
+  tagAmber:"#f0b946", tagAmberBg:"rgba(240,185,70,0.12)",
+  tagRed:"#f07070", tagRedBg:"rgba(240,112,112,0.12)",
+  tagPurple:"#b8a0e8", tagPurpleBg:"rgba(184,160,232,0.12)",
+  refBg:"#161c28", refBorder:"#2a3348",
+  toggleBg:"#2e3650", toggleKnob:"#7cb668",
+};
+
+const ThemeCtx = createContext(LIGHT);
+function useT() { return useContext(ThemeCtx); }
+
+/* ===== DATA (unchanged) ===== */
+const STUDY_TYPES = [
+  { id:"rnaseq", label:"RNA-seq / Transcriptomics", icon:"dna" },
+  { id:"gwas", label:"GWAS / SNP Association", icon:"search" },
+  { id:"popgen", label:"Population Genetics", icon:"globe" },
+  { id:"microbiome", label:"Metagenomics / Microbiome", icon:"bacteria" },
+  { id:"experimental", label:"Experimental Biology", icon:"flask" },
+  { id:"qualitative", label:"Qualitative / Mixed Methods", icon:"clipboard" },
+];
+const RNASEQ_GOALS = [
+  { id:"de_large", label:"Large fold-changes (FC \u2265 2)" },
+  { id:"de_moderate", label:"Moderate fold-changes (1.2 < FC < 2)" },
+  { id:"de_small", label:"Small fold-changes (FC \u2248 1.1\u20131.3)" },
+  { id:"exploratory", label:"Exploratory / pilot study" },
+  { id:"scrnaseq", label:"Single-cell RNA-seq" },
+];
+const POPGEN_GOALS = [
+  { id:"diversity", label:"Genetic diversity (He, Ho, AR, Fst)" },
+  { id:"structure", label:"Population structure (PCA, STRUCTURE)" },
+  { id:"parentage", label:"Parentage / relatedness assignment" },
+  { id:"selection", label:"Selection scans / adaptive loci" },
+  { id:"phylogeo", label:"Phylogeography / demographic history" },
+];
+const MARKER_TYPES = [
+  { id:"ssr", label:"Microsatellites (SSR)" },
+  { id:"snp_panel", label:"SNP panel (< 1K)" },
+  { id:"rad", label:"RAD-seq / ddRAD / GBS" },
+  { id:"wgs", label:"WGS / SNP array" },
+];
+const QUAL_GOALS = [
+  { id:"theme_sat", label:"Theme identification (data saturation)" },
+  { id:"meaning_sat", label:"Meaning saturation (rich description)" },
+  { id:"grounded", label:"Grounded theory (theoretical saturation)" },
+  { id:"metatheme", label:"Cross-site metatheme comparison" },
+  { id:"free_list", label:"Free-list / salience analysis" },
+  { id:"ethnography", label:"Ethnographic description" },
+  { id:"content", label:"Content analysis" },
+  { id:"reflexive", label:"Reflexive thematic analysis" },
+];
+const GWAS_DESIGNS = [
+  { id:"case_control", label:"Case\u2013control" },
+  { id:"quantitative", label:"Quantitative trait" },
+  { id:"family", label:"Family-based" },
+];
+const EXP_DESIGNS = [
+  { id:"two_group", label:"Two-group (t-test)" },
+  { id:"multi_group", label:"Multi-group (ANOVA)" },
+  { id:"paired", label:"Paired / repeated measures" },
+  { id:"survival", label:"Survival / time-to-event" },
+];
+const EFFECT_SIZES = [
+  { id:"large", label:"Large (d \u2265 0.8)" },
+  { id:"medium", label:"Medium (d \u2248 0.5)" },
+  { id:"small", label:"Small (d \u2248 0.2)" },
+  { id:"unknown", label:"Unknown" },
+];
+const MICROBIOME_GOALS = [
+  { id:"alpha", label:"Alpha diversity comparison" },
+  { id:"beta", label:"Beta diversity / composition" },
+  { id:"diff_abund", label:"Differential abundance" },
+  { id:"biomarker", label:"Biomarker discovery" },
+];
+
+/* ===== ICONS ===== */
+function MiniIcon({ name, size, color }) {
+  var C = useT(); var c = color || C.accent; var sz = size || 20;
+  var p = {
+    dna: <React.Fragment><path d="M4 2c0 3 3.5 4.5 8 5s4 3.5 4 5" stroke={c} strokeWidth="1.5" fill="none"/><path d="M12 2c0 3-3.5 4.5-8 5S0 10.5 0 12.5" stroke={c} strokeWidth="1.5" fill="none" transform="translate(0,1.5)"/><line x1="3" y1="5" x2="13" y2="5" stroke={c} strokeWidth="1" opacity="0.4"/><line x1="3" y1="9" x2="13" y2="9" stroke={c} strokeWidth="1" opacity="0.4"/></React.Fragment>,
+    search: <React.Fragment><circle cx="7" cy="7" r="5" stroke={c} strokeWidth="1.5" fill="none"/><line x1="11" y1="11" x2="15" y2="15" stroke={c} strokeWidth="1.5"/></React.Fragment>,
+    globe: <React.Fragment><circle cx="8" cy="8" r="6.5" stroke={c} strokeWidth="1.4" fill="none"/><ellipse cx="8" cy="8" rx="3" ry="6.5" stroke={c} strokeWidth="1.2" fill="none"/><line x1="1.5" y1="8" x2="14.5" y2="8" stroke={c} strokeWidth="1" opacity="0.5"/></React.Fragment>,
+    bacteria: <React.Fragment><ellipse cx="8" cy="8" rx="5" ry="6" stroke={c} strokeWidth="1.4" fill="none"/><circle cx="6" cy="6" r="1" fill={c} opacity="0.4"/><circle cx="10" cy="9" r="1.2" fill={c} opacity="0.4"/><line x1="8" y1="2" x2="8" y2="0" stroke={c} strokeWidth="1.2"/><line x1="4" y1="3" x2="3" y2="1" stroke={c} strokeWidth="1.2"/></React.Fragment>,
+    flask: <React.Fragment><path d="M6 2v5l-4 7h12l-4-7V2" stroke={c} strokeWidth="1.4" fill="none" strokeLinejoin="round"/><line x1="5" y1="2" x2="11" y2="2" stroke={c} strokeWidth="1.4"/><line x1="3.5" y1="11" x2="12.5" y2="11" stroke={c} strokeWidth="0.8" opacity="0.3"/></React.Fragment>,
+    clipboard: <React.Fragment><rect x="2" y="3" width="12" height="12" rx="1.5" stroke={c} strokeWidth="1.4" fill="none"/><rect x="5" y="1" width="6" height="3" rx="1" stroke={c} strokeWidth="1.2" fill="none"/><line x1="5" y1="8" x2="11" y2="8" stroke={c} strokeWidth="1" opacity="0.4"/><line x1="5" y1="11" x2="9" y2="11" stroke={c} strokeWidth="1" opacity="0.4"/></React.Fragment>,
+    book: <React.Fragment><path d="M2 2h5c1 0 2 .5 2 1.5v11c0-.8-.7-1.5-2-1.5H2z" stroke={c} strokeWidth="1.3" fill="none"/><path d="M14 2H9c-1 0-2 .5-2 1.5v11c0-.8.7-1.5 2-1.5h5z" stroke={c} strokeWidth="1.3" fill="none"/></React.Fragment>,
+    check: <polyline points="3,8 7,12 13,4" stroke={c} strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>,
+  };
+  return <svg width={sz} height={sz} viewBox="0 0 16 16" style={{ flexShrink:0 }}>{p[name]||null}</svg>;
+}
+
+/* ===== RECOMMENDATION ENGINE (all references included) ===== */
+function getRec(a) {
+  if (a.studyType==="rnaseq") return rnaseqRec(a.rnaseqGoal, a.organism);
+  if (a.studyType==="gwas") return gwasRec(a.gwasDesign, a.effectSize);
+  if (a.studyType==="popgen") return popgenRec(a.popgenGoal, a.markerType);
+  if (a.studyType==="microbiome") return microbiomeRec(a.microbiomeGoal, a.numGroups);
+  if (a.studyType==="experimental") return expRec(a.expDesign, a.effectSize, a.numGroups);
+  if (a.studyType==="qualitative") return qualRec(a.qualGoal);
+  return null;
+}
+
+function rnaseqRec(goal,org){var nm=org==="non_model";var d={
+de_large:{min:3,rec:4,ideal:"6+",tag:"green",title:"RNA-seq \u2014 Large Fold-Change Detection (FC \u2265 2)",summary:"With strong expected effects, even modest replication achieves adequate power for DE analysis.",details:["3 biological replicates per condition is the absolute statistical floor for DESeq2/edgeR.","4 replicates improves FDR control and reduces false discoveries substantially.","6+ replicates recommended when budget allows \u2014 substantially increases sensitivity for moderately expressed genes.","At n < 12, edgeR is the leading DE tool; at n \u2265 12, DESeq2 marginally outperforms (Schurch et al. 2016).",nm?"Non-model species: higher variability and incomplete annotation increase dispersion \u2014 aim for 5\u20136 replicates.":"Well-annotated genomes benefit from established dispersion priors in DE tools.","Sequencing depth: \u2265 20M mapped reads/sample for annotated genomes; \u2265 30\u201340M for non-model organisms."],power:"80%+ at n = 3\u20134/group for FC \u2265 2 (moderate dispersion, FDR < 0.05)",tools:"RNASeqPower, RnaSeqSampleSize, ssizeRNA, PROPER",refs:[{text:"Li CI, Su PF, Shyr Y. Sample size calculation based on exact test for assessing DE analysis in RNA-seq data.",journal:"BMC Bioinformatics",year:2013,vol:"14:357",doi:"10.1186/1471-2105-14-357",note:"Proposed negative binomial exact test; n = 3\u20135 adequate for FC \u2265 2 with moderate dispersion."},{text:"Schurch NJ et al. How many biological replicates are needed in an RNA-seq experiment?",journal:"RNA",year:2016,vol:"22(6):839\u2013851",doi:"10.1261/rna.053959.115",note:"Landmark 48-replicate yeast study; with n = 3, only 20\u201340% of all SDE genes found, but >85% for FC > 4\u00d7. Recommends \u2265 6 replicates for all experiments, \u2265 12 for identifying majority of all DE genes."},{text:"Yu L, Fernandez S, Brock G. Power analysis for RNA-seq DE studies.",journal:"BMC Bioinformatics",year:2017,vol:"18:234",doi:"10.1186/s12859-017-1648-2",note:"Confirmed 3\u20136 replicates for large effects; power gains plateau after 12."},{text:"Lamarre S et al. Optimization of RNA-Seq DE analysis depending on replicate number and library size.",journal:"Front Plant Sci",year:2018,vol:"9:108",doi:"10.3389/fpls.2018.00108",note:"Meta-analysis: replicate number impacts power more than library size."}]},
+de_moderate:{min:6,rec:8,ideal:"12+",tag:"amber",title:"RNA-seq \u2014 Moderate Fold-Change Detection (FC 1.2\u20132)",summary:"Subtle transcriptomic shifts require substantially more replication than large effects.",details:["6 biological replicates per condition is the practical minimum for FC ~ 1.5.","8 replicates recommended for reliable detection with controlled FDR.","12+ replicates needed for FC near 1.2\u20131.5, especially for low-expression genes.","Replicate number has a larger impact on power than sequencing depth for moderate effects.",nm?"Non-model species: higher variability inflates dispersion \u2014 use upper range estimates.":"Consider batch correction (ComBat-Seq, SVA) to reduce unwanted variation.","Formal power analysis with pilot dispersion estimates is strongly recommended."],power:"80% at n = 6\u20138/group for FC ~ 1.5 (FDR < 0.05)",tools:"RNASeqPower, PROPER, ssizeRNA, RnaSeqSampleSize",refs:[{text:"Schurch NJ et al. How many biological replicates are needed in an RNA-seq experiment?",journal:"RNA",year:2016,vol:"22(6):839\u2013851",doi:"10.1261/rna.053959.115",note:"\u2265 6 replicates recommended for all experiments; \u2265 12 when identifying the majority of all DE genes is important. For < 12 replicates, edgeR outperforms other tools."},{text:"Hart SN et al. Calculating sample size estimates for RNA sequencing data.",journal:"J Comp Biol",year:2013,vol:"20(12):970\u2013978",doi:"10.1089/cmb.2012.0283",note:"Score-test-based power calculation; basis for RNASeqPower R package."},{text:"Liu Y et al. More sequence or more replication?",journal:"Bioinformatics",year:2014,vol:"30(3):301\u2013304",doi:"10.1093/bioinformatics/btt688",note:"Adding replicates outperforms adding sequencing depth for moderate-effect detection."},{text:"Zhao S et al. RnaSeqSampleSize: real data based sample size estimation.",journal:"BMC Bioinformatics",year:2018,vol:"19:191",doi:"10.1186/s12859-018-2191-5",note:"Uses pilot/public data to estimate dispersion for data-driven power analysis."}]},
+de_small:{min:12,rec:"15\u201320",ideal:"20+",tag:"red",title:"RNA-seq \u2014 Small Fold-Change Detection (FC ~ 1.1\u20131.3)",summary:"Detecting subtle expression differences demands large biological replication.",details:["12 biological replicates per condition is the minimum for FC near 1.1\u20131.3.","15\u201320 replicates needed for reliable genome-wide detection.","Low-expression genes remain difficult even with many replicates \u2014 consider filtering.","At large n, sequencing depth of 15\u201320M reads/sample is often sufficient.","Batch correction (ComBat-Seq, SVA, RUVSeq) becomes critical.","Pooling reduces costs but sacrifices individual-level variability estimation."],power:"80% at n = 12\u201320/group for FC ~ 1.2 (FDR < 0.05)",tools:"PROPER, RnaSeqSampleSize, ssizeRNA",refs:[{text:"Schurch NJ et al. How many biological replicates are needed?",journal:"RNA",year:2016,vol:"22(6):839\u2013851",doi:"10.1261/rna.053959.115",note:"\u2265 12 replicates needed for identifying majority of all DE genes; >20 replicates for >85% detection regardless of fold change."},{text:"Liu Y et al. More sequence or more replication?",journal:"Bioinformatics",year:2014,vol:"30(3):301\u2013304",doi:"10.1093/bioinformatics/btt688",note:"Biological replicates dominate power at small effect sizes."},{text:"Wu H et al. PROPER: comprehensive power evaluation for DE using RNA-seq.",journal:"Bioinformatics",year:2015,vol:"31(2):233\u2013241",doi:"10.1093/bioinformatics/btu640",note:"Simulation-based power evaluation from pilot data."}]},
+exploratory:{min:3,rec:5,ideal:"6\u20138",tag:"purple",title:"RNA-seq \u2014 Exploratory / Pilot Study",summary:"For hypothesis generation, smaller samples are justifiable with appropriate caveats.",details:["3 biological replicates is the absolute minimum for any statistical testing.","5 replicates improve reliability of exploratory gene lists.","Prioritize sequencing depth (\u2265 30\u201340M reads) when replicates are limited.",nm?"Non-model: 4\u20135 replicates and \u2265 40M reads for de novo assembly quality.":"Well-annotated genomes can leverage existing resources with fewer replicates.","Results are hypothesis-generating \u2014 plan validation (qPCR, independent cohort).","Document the exploratory nature and limitations in your manuscript."],power:"Not the primary target \u2014 prioritize discovery breadth",tools:"Standard DE pipelines with conservative FDR; note limitations",refs:[{text:"Conesa A et al. A survey of best practices for RNA-seq data analysis.",journal:"Genome Biology",year:2016,vol:"17:13",doi:"10.1186/s13059-016-0881-8",note:"Comprehensive guideline; \u2265 3 replicates minimum, \u2265 6 preferred."},{text:"Todd EV et al. The power and promise of RNA-seq in ecology and evolution.",journal:"Molecular Ecology",year:2016,vol:"25:1224\u20131241",doi:"10.1111/mec.13526",note:"RNA-seq design for non-model organisms; \u2265 3 replicates with high depth."}]},
+scrnaseq:{min:"500 cells",rec:"1\u20133K cells",ideal:"5K+ cells",tag:"amber",title:"Single-cell RNA-seq",summary:"Sample size is measured in both cells captured and biological replicates.",details:["500 cells total achieves 80% power for Form I DE.","\u2265 3 biological replicates per condition remain essential.","Rare cell types (< 5%) may need 5,000\u201310,000+ total cells.","Pseudoreplication (cells from one individual as independent) inflates false positives."],power:"80% for DE at 500+ cells (Form I); depends on cell-type frequency",tools:"POWSC, powsimR, scDesign2, scPower",refs:[{text:"Wu H, Zhao H. POWSC: simulation, power evaluation for scRNA-seq.",journal:"Bioinformatics",year:2020,vol:"36(19):4860\u20134868",doi:"10.1093/bioinformatics/btaa607",note:"500 cells sufficient for 80% power (Form I DE)."},{text:"Squair JW et al. Confronting false discoveries in single-cell DE.",journal:"Nature Communications",year:2021,vol:"12:5692",doi:"10.1038/s41467-021-25960-2",note:"Pseudoreplication inflates FDR; biological replicates determine valid inference."}]}
+};return d[goal]||d.de_large;}
+
+function gwasRec(design,effect){var cc=design==="case_control";var sz={large:{min:cc?"500+500":"1,000",rec:cc?"1K+1K":"2,000",ideal:cc?"5K+":"5K+",tag:"green"},medium:{min:cc?"2K+2K":"5,000",rec:cc?"5K+5K":"10,000",ideal:cc?"10K+":"50K+",tag:"amber"},small:{min:cc?"10K+10K":"20,000",rec:cc?"50K+":"100K+",ideal:cc?"100K+":"500K+",tag:"red"},unknown:{min:cc?"5K+5K":"10,000",rec:cc?"10K+":"50K+",ideal:cc?"50K+":"100K+",tag:"purple"}};var s=sz[effect]||sz.unknown;
+return{...s,title:"GWAS \u2014 "+(cc?"Case\u2013Control":design==="family"?"Family-Based":"Quantitative Trait"),summary:"Genome-wide significance (p < 5 \u00d7 10\u207b\u2078) demands large samples.",details:["Power depends on effect size, risk allele frequency, LD, and significance threshold.","Imputation from reference panels (1000 Genomes, TOPMed) increases effective marker density.","Multi-ancestry designs improve generalizability and fine-mapping.","For aquaculture/livestock QTL: 500\u20132,000 individuals often sufficient for major QTL.","Include explicit power calculations in proposals and manuscripts."],power:"80% at p < 5\u00d710\u207b\u2078",tools:"GPC, QUANTO, CaTS, GCTA-GREML",refs:[{text:"Spencer CCA et al. Designing GWAS: sample size, power, imputation, genotyping chip.",journal:"PLoS Genetics",year:2009,vol:"5(4):e1000477",doi:"10.1371/journal.pgen.1000477",note:"Comprehensive GWAS power framework."},{text:"Visscher PM et al. 10 years of GWAS discovery.",journal:"Am J Hum Genet",year:2017,vol:"101(1):5\u201322",doi:"10.1016/j.ajhg.2017.06.005",note:"Larger samples reveal smaller effects."},{text:"Hong EP, Park JW. Sample size and power in genetic association studies.",journal:"Genomics & Informatics",year:2012,vol:"10(2):117\u2013122",doi:"10.5808/GI.2012.10.2.117",note:"Accessible tutorial with worked examples."}]};}
+
+function popgenRec(goal,marker){var mN={ssr:"SSR",snp_panel:"SNP panel",rad:"RAD-seq",wgs:"WGS/array"}[marker]||"markers";var hi=marker==="rad"||marker==="wgs";var d={
+diversity:{min:20,rec:30,ideal:"50+",tag:"green",title:"Genetic Diversity \u2014 "+mN,summary:"Accurate estimation of heterozygosity and allelic richness requires adequate population sampling.",details:[marker==="ssr"?"SSR: 25\u201330 individuals per population for reliable allelic richness.":mN+": higher marker density partially compensates for fewer individuals.","20 per population is the practical minimum for He, Ho, basic Fst.","30+ recommended for allelic richness and private allele detection.","50+ needed to capture rare alleles (freq < 5%).","SaSii R script empirically evaluates sample size adequacy."],power:"Use rarefaction curves, bootstrap, or SaSii",tools:"SaSii, hierfstat (R), GENEPOP, Arlequin",refs:[{text:"Hale ML et al. Sampling for microsatellite-based population genetic studies: 25\u201330 individuals is enough.",journal:"PLoS ONE",year:2012,vol:"7(9):e45170",doi:"10.1371/journal.pone.0045170",note:"25\u201330 sufficient for allele frequency estimation with SSRs."},{text:"Nazareno AG et al. Minimum sample sizes for population genomics.",journal:"Mol Ecol Res",year:2017,vol:"17:1136\u20131147",doi:"10.1111/1755-0998.12654",note:"RAD-seq (ddRADseq): n = 8 per population sufficient for accurate Fst and He with \u2265 1,000 SNPs; larger samples needed for rare/private alleles."},{text:"Scaketti M et al. SaSii: an R script for estimating optimal sample sizes in population genetics.",journal:"PLoS ONE",year:2025,vol:"20(2):e0316634",doi:"10.1371/journal.pone.0316634",note:"SSR: 15\u201330 individuals; SNP: 5\u201325 for most species depending on marker density."}]},
+structure:{min:15,rec:"25\u201330",ideal:"50+",tag:"amber",title:"Population Structure \u2014 "+mN,summary:"Detecting clusters depends on sample size and divergence level.",details:[hi?"Genome-wide markers: 15+ per pop often sufficient for well-differentiated populations.":"Limited markers: \u2265 25\u201330 per population needed.","Weakly differentiated populations (Fst < 0.01) may need 50+.","STRUCTURE: sensitive to uneven sampling \u2014 balance group sizes.","PCA-based methods more robust to sample size imbalance."],power:"Simulation-based (powsimR, strataG)",tools:"STRUCTURE, ADMIXTURE, DAPC, smartPCA",refs:[{text:"Puechmaille SJ. STRUCTURE does not reliably recover structure when sampling is uneven.",journal:"Mol Ecol Res",year:2016,vol:"16:608\u2013627",doi:"10.1111/1755-0998.12512",note:"Balanced sampling recommended."},{text:"Willing E-M et al. Fst estimates do not require large samples with many SNPs.",journal:"PLoS ONE",year:2012,vol:"7(8):e42649",doi:"10.1371/journal.pone.0042649",note:"With > 1000 SNPs, n = 4\u20136 yields accurate Fst."}]},
+parentage:{min:"All candidates",rec:"All + 15+ loci",ideal:"Complete pedigree",tag:"green",title:"Parentage / Relatedness",summary:"Accuracy depends on candidate completeness and marker informativeness.",details:["Sample ALL candidate parents \u2014 missing candidates cause errors.",marker==="ssr"?"SSRs: 15\u201320 loci for > 95% accuracy.":"SNPs: 100\u2013300 for parentage; 500+ for complex pedigrees.","For aquaculture: genotype all breeders + \u2265 30\u201350 offspring per cross.","Account for genotyping error rates in assignment software."],power:"Simulate exclusion probability given your marker panel",tools:"COLONY, CERVUS, FRANZ, Sequoia (R)",refs:[{text:"Jones AG et al. A practical guide to parentage analysis.",journal:"Mol Ecol Res",year:2010,vol:"10(1):6\u201330",doi:"10.1111/j.1755-0998.2009.02778.x",note:"SSR: 10\u201320 loci; SNP: 60\u2013200; emphasizes complete candidate sampling."},{text:"Huisman J. Pedigree reconstruction from SNP data.",journal:"Mol Ecol Res",year:2017,vol:"17(5):1009\u20131024",doi:"10.1111/1755-0998.12665",note:"Sequoia R package; 100\u2013500 SNPs recommended."}]},
+selection:{min:20,rec:"30\u201350",ideal:"100+",tag:"red",title:"Selection Scans \u2014 "+mN,summary:"Detecting selection requires adequate individuals and genome coverage.",details:["20 per population minimum for outlier methods (BayeScan, pcadapt).","30\u201350 for environmental association (LFMM, RDA).","100+ for subtle signals (soft sweeps, polygenic adaptation).","Population structure confounds scans \u2014 adequate sampling reduces false positives."],power:"Use forward simulation (SLiM, fsc26)",tools:"BayeScan, pcadapt, BayPass, OutFLANK, LFMM",refs:[{text:"Lotterhos KE, Whitlock MC. Evaluation of FST outlier tests.",journal:"Mol Ecol",year:2014,vol:"23:2178\u20132192",doi:"10.1111/mec.12725",note:"Most outlier methods require n \u2265 20/population."},{text:"Forester BR et al. Detecting spatial genetic signatures of local adaptation.",journal:"Mol Ecol",year:2016,vol:"25:104\u2013120",doi:"10.1111/mec.13476",note:"Environmental association needs n \u2265 30\u201350."}]},
+phylogeo:{min:10,rec:"20\u201330",ideal:"50+",tag:"amber",title:"Phylogeography \u2014 "+mN,summary:"Coalescent inference benefits from both individual and locus sampling.",details:["10 per pop may suffice for deeply diverged lineages with many loci.","20\u201330 for ABC or fastsimcoal2 parameter estimation.","Ne estimation via LD: 30\u201350 individuals recommended.","More loci partially compensate for fewer individuals."],power:"ABC posterior predictive checks",tools:"fastsimcoal2, DIYABC-RF, BEAST2, NeEstimator",refs:[{text:"Excoffier L et al. Robust demographic inference from genomic and SNP data.",journal:"PLoS Genetics",year:2013,vol:"9(10):e1003905",doi:"10.1371/journal.pgen.1003905",note:"n = 10\u201320 per pop with genome-wide SNPs is adequate."},{text:"Waples RS, Do C. LD estimates of contemporary Ne.",journal:"Evol Applications",year:2010,vol:"3:244\u2013262",doi:"10.1111/j.1752-4571.2009.00104.x",note:"LD-based Ne: n \u2265 25\u201350 recommended."}]}
+};return d[goal]||d.diversity;}
+
+function microbiomeRec(goal,numGroups){var g=Math.min(parseInt(numGroups)||2,5);var d={
+alpha:{min:(10*g)+" total",rec:(20*g)+" total",ideal:(30*g)+"+",tag:"green",title:"Microbiome \u2014 Alpha Diversity",summary:"Comparing within-sample diversity across "+g+" groups.",details:["~10 per group minimum, 20 per group recommended.","\u2265 10,000 reads/sample after QC for 16S.","Use pilot data for formal power calculation."],power:"80% with d ~ 0.8 at n \u2248 15\u201320/group",tools:"micropower, HMP (R), pwr, phyloseq",refs:[{text:"Kelly BJ et al. Power and sample-size estimation for microbiome studies using PERMANOVA.",journal:"Bioinformatics",year:2015,vol:"31(15):2461\u20132468",doi:"10.1093/bioinformatics/btv183",note:"n = 20\u201330/group for moderate effects."},{text:"La Rosa PS et al. Hypothesis testing and power for microbiome data.",journal:"PLoS ONE",year:2012,vol:"7(12):e52078",doi:"10.1371/journal.pone.0052078",note:"Dirichlet-multinomial: 15\u201325/group for alpha diversity."}]},
+beta:{min:(15*g)+" total",rec:(25*g)+" total",ideal:(40*g)+"+",tag:"amber",title:"Microbiome \u2014 Beta Diversity",summary:"Community-level comparisons across "+g+" groups.",details:["~15 per group minimum, 25 per group recommended.","High inter-individual variability inflates required n.","Shotgun metagenomics: similar sizes, higher depth (\u2265 5M reads)."],power:"Simulate from pilot data",tools:"micropower, vegan (R), QIIME2, phyloseq",refs:[{text:"Kelly BJ et al. Power and sample-size for microbiome studies.",journal:"Bioinformatics",year:2015,vol:"31(15):2461\u20132468",doi:"10.1093/bioinformatics/btv183",note:"PERMANOVA: n = 20\u201340/group for R\u00b2 = 0.05\u20130.10."},{text:"Quince C et al. Shotgun metagenomics, from sampling to analysis.",journal:"Nat Biotechnol",year:2017,vol:"35(9):833\u2013844",doi:"10.1038/nbt.3935",note:"Sample sizes analogous to 16S."}]},
+diff_abund:{min:(20*g)+" total",rec:(30*g)+" total",ideal:(50*g)+"+",tag:"red",title:"Microbiome \u2014 Differential Abundance",summary:"Detecting differentially abundant taxa across "+g+" groups.",details:["~20 per group minimum, 30+ recommended.","Multiple testing correction increases sample requirements.","Compositionality requires ANCOM-BC, ALDEx2, or LinDA.","Rare taxa (< 1%) require even larger samples."],power:"Highly variable",tools:"ANCOM-BC2, MaAsLin2, ALDEx2, LinDA",refs:[{text:"Nearing JT et al. Microbiome DA methods produce different results across 38 datasets.",journal:"Nat Commun",year:2022,vol:"13:342",doi:"10.1038/s41467-022-28034-z",note:"ANCOM-BC and ALDEx2 show best FDR control."},{text:"Lin H, Peddada SD. ANCOM-BC.",journal:"Nat Commun",year:2020,vol:"11:3514",doi:"10.1038/s41467-020-17041-7",note:"Compositionality-aware testing outperforms naive approaches."}]},
+biomarker:{min:50,rec:100,ideal:"200+",tag:"red",title:"Microbiome \u2014 Biomarker Discovery",summary:"ML or statistical identification of microbial biomarkers.",details:["50 total minimum for initial discovery.","100+ for cross-validated models.","200+ for robust panels with independent validation.","Use nested cross-validation to control overfitting."],power:"Cross-validated AUC \u2265 0.7\u20130.8",tools:"LEfSe, Random Forest, LASSO, mikropml",refs:[{text:"Top\u00e7uo\u011flu BD et al. Effective ML for microbiome classification.",journal:"mBio",year:2020,vol:"11(3):e00434-20",doi:"10.1128/mBio.00434-20",note:"n \u2265 100; nested CV essential."},{text:"Wirbel J et al. SIAMCAT toolbox.",journal:"Genome Biology",year:2021,vol:"22:93",doi:"10.1186/s13059-021-02306-1",note:"n \u2265 100\u2013200 for generalizable models."}]}
+};return d[goal]||d.alpha;}
+
+function expRec(design,effect,numGroups){var g=Math.min(parseInt(numGroups)||2,6);var pg={large:{two_group:26,multi_group:21,paired:15,survival:33},medium:{two_group:64,multi_group:52,paired:34,survival:74},small:{two_group:394,multi_group:322,paired:199,survival:452},unknown:{two_group:64,multi_group:52,paired:34,survival:74}};var dd={large:"0.8",medium:"0.5",small:"0.2",unknown:"0.5 (assumed)"};var n=(pg[effect]||pg.medium)[design]||64;
+return{min:n,rec:Math.ceil(n*1.2),ideal:Math.ceil(n*1.5)+"+",tag:effect==="large"?"green":effect==="small"?"red":"amber",title:"Experimental Biology \u2014 "+({two_group:"Two-Group",multi_group:g+"-Group ANOVA",paired:"Paired",survival:"Survival"}[design]||design),summary:"For d = "+dd[effect]+", ~"+n+" per group achieves 80% power (\u03b1 = 0.05).",details:["Total: ~"+(n*g)+" across "+g+" groups.",effect==="unknown"?"Effect size unknown \u2014 d = 0.5 (medium) assumed. Pilot study strongly recommended.":"Cohen\u2019s d = "+dd[effect]+".",design==="paired"?"Paired designs reduce n by ~40\u201350% vs. independent groups.":null,design==="multi_group"?"Post-hoc corrections for "+g+" groups: ~10\u201320% more per group.":null,"Tank/cage effects require unit-level replication (\u2265 3 tanks/treatment).","Aquaculture: pseudo-replication from fish-within-tank is a common error."].filter(Boolean),power:"80% at \u03b1 = 0.05, d = "+dd[effect],tools:"G*Power 3.1, pwr (R), WebPower, Piface",refs:[{text:"Cohen J. Statistical Power Analysis for the Behavioral Sciences.",journal:"2nd ed., Routledge",year:1988,vol:"",doi:"10.4324/9780203771587",note:"d = 0.2 (small), 0.5 (medium), 0.8 (large)."},{text:"Faul F et al. G*Power 3.",journal:"Behavior Research Methods",year:2007,vol:"39(2):175\u2013191",doi:"10.3758/BF03193146",note:"Standard a priori power analysis tool."},{text:"Lazic SE. The problem of pseudoreplication.",journal:"BMC Neuroscience",year:2010,vol:"11:5",doi:"10.1186/1471-2202-11-5",note:"Experimental unit (tank, cage), not individual, determines n."}]};}
+
+function qualRec(goal){var d={
+theme_sat:{min:"9 interviews",rec:"12\u201313",ideal:"16\u201317",tag:"green",title:"Theme Saturation (Data Saturation)",summary:"Identifying ~90% of themes in qualitative interview data.",details:["9 interviews minimum; mean 12\u201313 across studies.","4 focus groups (mean: 5\u20136).","Web-based interviews: 30\u201367 needed.","Bounded domains saturate faster.","Probing skill significantly affects saturation.","Best for codebook development or early mixed-methods steps."],power:"Cumulative theme emergence",tools:"Buckley\u2019s 10-step protocol; CoMeTS",refs:[{text:"Guest G et al. How many interviews are enough?",journal:"Field Methods",year:2006,vol:"18(1):59\u201382",doi:"10.1177/1525822X05279903",note:"Landmark study: 6 interviews = 73% themes, 12 = 92%."},{text:"Hennink M, Kaiser BN. Sample sizes for saturation: systematic review.",journal:"Soc Sci & Med",year:2022,vol:"292:114523",doi:"10.1016/j.socscimed.2021.114523",note:"Theme saturation at 9\u201317 interviews."},{text:"Wutich A et al. Sample sizes for 10 types of qualitative data analysis.",journal:"Int J Qual Methods",year:2024,vol:"23:1\u201314",doi:"10.1177/16094069241296206",note:"Theme saturation: 9 interviews, 4 focus groups."},{text:"Squire CM et al. Sample size for web-based qualitative interviews.",journal:"J Med Internet Res",year:2024,vol:"26:e52998",doi:"10.2196/52998",note:"Web interviews: 30\u201367 needed."}]},
+meaning_sat:{min:"24 interviews",rec:"24",ideal:"30+",tag:"amber",title:"Meaning Saturation",summary:"Full depth, nuance, and variability within themes.",details:["24 interviews; 8 focus groups.","Most useful saturation concept for descriptive thematic research.","Goes beyond listing themes to understanding variability and context.","Probing strategy and sampling approach matter.","Recommended default target for most qualitative studies."],power:"Richness of theme descriptions",tools:"Hennink et al. meaning saturation framework",refs:[{text:"Hennink MM et al. Code saturation versus meaning saturation.",journal:"Qual Health Res",year:2017,vol:"27(4):591\u2013608",doi:"10.1177/1049732316665344",note:"Code saturation at 9; meaning saturation at 16\u201324."},{text:"Hennink MM et al. What influences saturation in focus groups?",journal:"Qual Health Res",year:2019,vol:"29(10):1483\u20131496",doi:"10.1177/1049732318821692",note:"Focus groups: code at 4, meaning at 8."},{text:"Wutich A et al. Sample sizes for 10 types of qualitative data analysis.",journal:"Int J Qual Methods",year:2024,vol:"23:1\u201314",doi:"10.1177/16094069241296206",note:"Meaning saturation is the most widely applicable concept."}]},
+grounded:{min:"20 interviews",rec:"20\u201330",ideal:"30+",tag:"amber",title:"Theoretical Saturation (Grounded Theory)",summary:"Iterative sampling until all concepts and inter-relationships are described.",details:["Cannot be determined a priori.","Meta-analyses: 20\u201330+ typically sufficient.","Stop when no new concepts/properties emerge.","Document theoretical sampling decisions rigorously."],power:"Theoretical completeness",tools:"Grounded theory (Glaser & Strauss; Charmaz)",refs:[{text:"Thomson SB. Sample size and grounded theory.",journal:"J Admin & Governance",year:2011,vol:"5:45\u201352",doi:"",note:"Most studies used 20\u201330 interviews."},{text:"Mason M. Sample size and saturation in PhD studies.",journal:"Forum Qual Sozialforschung",year:2010,vol:"11(3)",doi:"10.17169/fqs-11.3.1428",note:"Modal samples of 20 and 30."},{text:"Wutich A et al. Sample sizes for 10 types of qualitative data analysis.",journal:"Int J Qual Methods",year:2024,vol:"23:1\u201314",doi:"10.1177/16094069241296206",note:"20\u201330+ recommended."}]},
+metatheme:{min:"20/site",rec:"20\u201340/site",ideal:"39+/site",tag:"red",title:"Metatheme Saturation (Cross-Site)",summary:"Cross-site themes with reliable within-site occurrence.",details:["20 per site to identify all metathemes once.","Up to 39 per site for \u2265 3 occurrences.","Heterogeneous samples: ~18 per site.","Each site needs independent adequate sampling."],power:"Cross-site replication frequency",tools:"Metatheme analysis (Wutich et al. 2021)",refs:[{text:"Hagaman AK, Wutich A. How many interviews for metathemes?",journal:"Field Methods",year:2017,vol:"29(1):23\u201341",doi:"10.1177/1525822X16640447",note:"All metathemes within 20/site; reliable at 39/site."},{text:"Wutich A et al. Sample sizes for 10 types of qualitative data analysis.",journal:"Int J Qual Methods",year:2024,vol:"23:1\u201314",doi:"10.1177/16094069241296206",note:"20\u201340 per site."}]},
+free_list:{min:"10 lists",rec:"10 (exhaustive)",ideal:"15\u201320",tag:"green",title:"Saturation in Salience (Free Lists)",summary:"Identifying salient items with exhaustive probing.",details:["10 exhaustive free lists = 95% of salient items.","Exhaustive probing critical \u2014 superficial interviewing creates false saturation.","Useful for identifying key terms, species, symptoms."],power:"Cumulative salience (Smith\u2019s S)",tools:"FLAME, ANTHROPAC, AnthroTools (R)",refs:[{text:"Weller SC et al. Open-ended interview questions and saturation.",journal:"PLoS ONE",year:2018,vol:"13(6):e0198606",doi:"10.1371/journal.pone.0198606",note:"10 exhaustive lists capture 95% of salient items."},{text:"Wutich A et al. Sample sizes for 10 types of qualitative data analysis.",journal:"Int J Qual Methods",year:2024,vol:"23:1\u201314",doi:"10.1177/16094069241296206",note:"10 free lists if exhaustive probing."}]},
+ethnography:{min:"20\u201330 interviews",rec:"50\u201381 documents",ideal:"Year+ fieldwork",tag:"amber",title:"Ethnographic Study",summary:"Mixed data from observations, interviews, and participation.",details:["50 documents for ~80% themes; 81 for ~90%.","20\u201330 interviews for cultural consensus on a single topic.","Field duration \u2265 1 year improves sensitive topic reporting."],power:"Cultural consensus: eigenvalue ratio \u2265 3:1",tools:"Cultural consensus analysis, ethnographic protocols",refs:[{text:"DiStefano AS, Yang JS. Sample size and saturation for ethnographic research.",journal:"Field Methods",year:2024,vol:"36(2):145\u2013159",doi:"10.1177/1525822X231194515",note:"50 documents for 80%; 81 for 90%."},{text:"Weller SC. Cultural consensus theory: FAQ.",journal:"Field Methods",year:2007,vol:"19(4):339\u2013368",doi:"10.1177/1525822X07303502",note:"20\u201330 informants for single cultural domain."},{text:"Wutich A et al. Sample sizes for 10 types of qualitative data analysis.",journal:"Int J Qual Methods",year:2024,vol:"23:1\u201314",doi:"10.1177/16094069241296206",note:"50\u201381 documents or 20\u201330 interviews."}]},
+content:{min:"Varies",rec:"Power / info power",ideal:"Census",tag:"purple",title:"Content Analysis",summary:"Classical uses statistical power; qualitative uses information power.",details:["Classical: power analysis for random/census samples.","Qualitative: information power (Malterud et al. 2016).","Broader aims, larger populations \u2192 larger samples.","Cross-case comparisons double sample needs."],power:"Statistical power (classical) or information power (qualitative)",tools:"G*Power, information power checklist",refs:[{text:"Krippendorff K. Content Analysis: An Introduction to Its Methodology.",journal:"3rd ed., Sage",year:2013,vol:"",doi:"10.4135/9781071878781",note:"Standard reference for classical content analysis."},{text:"Malterud K et al. Sample size guided by information power.",journal:"Qual Health Res",year:2016,vol:"26(13):1753\u20131760",doi:"10.1177/1049732315617444",note:"5-factor information power model."},{text:"Wutich A et al. Sample sizes for 10 types of qualitative data analysis.",journal:"Int J Qual Methods",year:2024,vol:"23:1\u201314",doi:"10.1177/16094069241296206",note:"Classical: settled science."}]},
+reflexive:{min:"Not specified",rec:"Use PRICE model",ideal:"Pragmatic",tag:"purple",title:"Reflexive Thematic Analysis",summary:"No empirical guidance; a priori estimation argued to be inappropriate.",details:["No established minimum.","Braun & Clarke (2022): determine range pragmatically.","PRICE model (Naeem et al. 2024): Perspectivation \u2192 Recapitulation \u2192 Integration \u2192 Crystallization \u2192 Edification.","Absence of guidance disadvantages researchers in grant competitions."],power:"No established framework; PRICE offers qualitative steps",tools:"PRICE model; Braun & Clarke guidelines",refs:[{text:"Braun V, Clarke V. To saturate or not to saturate?",journal:"Qual Res in Sport, Exercise & Health",year:2021,vol:"13(2):201\u2013216",doi:"10.1080/2159676X.2019.1704846",note:"Saturation is incompatible with reflexive TA epistemology."},{text:"Naeem M et al. Demystification of data saturation through thematic analysis.",journal:"Int J Qual Methods",year:2024,vol:"23:16094069241229777",doi:"10.1177/16094069241229777",note:"PRICE model proposed."},{text:"Wutich A et al. Sample sizes for 10 types of qualitative data analysis.",journal:"Int J Qual Methods",year:2024,vol:"23:1\u201314",doi:"10.1177/16094069241296206",note:"No empirical guidance; meta-analysis needed."}]}
+};return d[goal]||d.theme_sat;}
+
+/* ===== UI COMPONENTS (theme-aware via useT) ===== */
+function Option({ label, selected, onClick, icon }) {
+  var C = useT();
+  return <button onClick={onClick} style={{ display:"flex",alignItems:"center",gap:12, background:selected?C.accentLight:C.surface, border:"1.5px solid "+(selected?C.borderActive:C.border), borderRadius:10,padding:"13px 17px",cursor:"pointer", transition:"all 0.15s",textAlign:"left",width:"100%",outline:"none" }}
+    onMouseEnter={function(e){if(!selected)e.currentTarget.style.borderColor=C.textTertiary}}
+    onMouseLeave={function(e){if(!selected)e.currentTarget.style.borderColor=C.border}}>
+    {selected && <MiniIcon name="check" size={17} color={C.accent}/>}
+    {icon && !selected && <MiniIcon name={icon} size={18} color={C.textTertiary}/>}
+    <span style={{ color:selected?C.accentText:C.text, fontWeight:selected?600:450, fontSize:17, lineHeight:1.4 }}>{label}</span>
+  </button>;
+}
+
+function OptionGrid({ options, value, onChange, cols }) {
+  return <div style={{ display:"grid", gridTemplateColumns:"repeat("+(cols||2)+", 1fr)", gap:10 }}>
+    {options.map(function(o){ return <Option key={o.id} label={o.label} selected={value===o.id} onClick={function(){onChange(o.id)}} icon={o.icon}/> })}
+  </div>;
+}
+
+function Step({ n, label }) {
+  var C = useT();
+  return <div style={{ display:"flex",alignItems:"center",gap:12,marginBottom:14 }}>
+    <span style={{ width:28,height:28,borderRadius:"50%",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:700,background:C.accentLight,color:C.accent }}>{n}</span>
+    <span style={{ fontSize:18,fontWeight:600,color:C.text }}>{label}</span>
+  </div>;
+}
+
+function Tag({ label, type }) {
+  var C = useT();
+  var m = {green:{bg:C.tagGreenBg,fg:C.tagGreen},amber:{bg:C.tagAmberBg,fg:C.tagAmber},red:{bg:C.tagRedBg,fg:C.tagRed},purple:{bg:C.tagPurpleBg,fg:C.tagPurple}};
+  var t = m[type]||m.amber;
+  return <span style={{ display:"inline-block",background:t.bg,color:t.fg,fontSize:13,fontWeight:600,padding:"4px 11px",borderRadius:5,letterSpacing:0.5,textTransform:"uppercase" }}>{label}</span>;
+}
+
+function Metric({ label, value, note }) {
+  var C = useT();
+  return <div style={{ flex:1,minWidth:140,padding:"16px 18px",background:C.surfaceAlt,borderRadius:10 }}>
+    <div style={{ fontSize:13,color:C.textTertiary,textTransform:"uppercase",letterSpacing:0.8,marginBottom:5,fontWeight:600 }}>{label}</div>
+    <div style={{ fontSize:24,fontWeight:700,color:C.text,lineHeight:1.2 }}>{value}</div>
+    {note && <div style={{ fontSize:13,color:C.textTertiary,marginTop:4 }}>{note}</div>}
+  </div>;
+}
+
+function RefCard({ r, index }) {
+  var C = useT();
+  return <div style={{ background:C.refBg,border:"1px solid "+C.refBorder,borderRadius:10,padding:"14px 16px",marginBottom:10 }}>
+    <div style={{ fontSize:14,color:C.text,lineHeight:1.55,fontWeight:500 }}>
+      <span style={{ color:C.textTertiary,fontWeight:600,marginRight:7 }}>{"["+index+"]"}</span>{r.text}
+    </div>
+    <div style={{ fontSize:13,color:C.textTertiary,marginTop:4 }}>
+      <em>{r.journal}</em>{r.year?" ("+r.year+")":""}{r.vol?" "+r.vol:""}
+      {r.doi&&r.doi.length>0&&<span>{" \u00b7 "}<a href={"https://doi.org/"+r.doi} target="_blank" rel="noreferrer" style={{ color:C.accent,textDecoration:"none" }}>{"doi:"+r.doi}</a></span>}
+    </div>
+    {r.note && <div style={{ fontSize:13,color:C.textSecondary,marginTop:7,lineHeight:1.55,borderLeft:"2px solid "+C.border,paddingLeft:12 }}>
+      <strong style={{ color:C.text }}>Why this source: </strong>{r.note}
+    </div>}
+  </div>;
+}
+
+function Result({ rec }) {
+  if(!rec)return null;
+  var C = useT();
+  var [showRefs,setShowRefs]=useState(true);
+  var tagLabel={green:"Achievable",amber:"Moderate",red:"Demanding",purple:"Context-dependent"};
+  return <div style={{ marginTop:24,background:C.surface,border:"1.5px solid "+C.border,borderRadius:14,padding:"28px 26px" }}>
+    <Tag label={tagLabel[rec.tag]||"Guidance"} type={rec.tag}/>
+    <h2 style={{ fontSize:22,fontWeight:700,color:C.text,margin:"10px 0 8px",lineHeight:1.3 }}>{rec.title}</h2>
+    <p style={{ fontSize:17,color:C.textSecondary,lineHeight:1.55,margin:"0 0 22px" }}>{rec.summary}</p>
+    <div style={{ display:"flex",gap:12,flexWrap:"wrap",marginBottom:26 }}>
+      <Metric label="Minimum" value={rec.min} note="per group"/>
+      <Metric label="Recommended" value={rec.rec} note="per group"/>
+      <Metric label="Ideal" value={rec.ideal} note="per group"/>
+    </div>
+    <div style={{ marginBottom:24 }}>
+      <div style={{ fontSize:16,fontWeight:600,color:C.text,marginBottom:10 }}>Key guidance</div>
+      {rec.details.map(function(d,i){ return <div key={i} style={{ display:"flex",gap:10,marginBottom:8,fontSize:16,color:C.textSecondary,lineHeight:1.55 }}>
+        <span style={{ color:C.accent,flexShrink:0,fontWeight:700 }}>{"\u203a"}</span><span>{d}</span>
+      </div> })}
+    </div>
+    <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:24 }}>
+      <div style={{ background:C.surfaceAlt,borderRadius:10,padding:"12px 14px" }}>
+        <div style={{ fontSize:12,color:C.textTertiary,textTransform:"uppercase",letterSpacing:0.8,fontWeight:600,marginBottom:4 }}>Power target</div>
+        <div style={{ fontSize:14,color:C.text,lineHeight:1.4 }}>{rec.power}</div>
+      </div>
+      <div style={{ background:C.surfaceAlt,borderRadius:10,padding:"12px 14px" }}>
+        <div style={{ fontSize:12,color:C.textTertiary,textTransform:"uppercase",letterSpacing:0.8,fontWeight:600,marginBottom:4 }}>Recommended tools</div>
+        <div style={{ fontSize:14,color:C.text,lineHeight:1.4 }}>{rec.tools}</div>
+      </div>
+    </div>
+    {rec.refs&&rec.refs.length>0&&<div>
+      <button onClick={function(){setShowRefs(!showRefs)}} style={{ display:"flex",alignItems:"center",gap:8,background:"none",border:"none",cursor:"pointer",padding:0,fontSize:16,fontWeight:600,color:C.accent,marginBottom:showRefs?12:0 }}>
+        <MiniIcon name="book" size={17} color={C.accent}/>
+        {"Sources & evidence ("+rec.refs.length+" references)"}
+        <span style={{ fontSize:13,transition:"transform 0.2s",transform:showRefs?"rotate(180deg)":"rotate(0)",display:"inline-block" }}>{"\u25be"}</span>
+      </button>
+      {showRefs&&<div>
+        <div style={{ fontSize:13,color:C.textTertiary,marginBottom:12,lineHeight:1.55 }}>Each reference explains how it supports the recommendation. DOI links open the original publication.</div>
+        {rec.refs.map(function(r,i){ return <RefCard key={i} r={r} index={i+1}/> })}
+      </div>}
+    </div>}
+  </div>;
+}
+
+/* ===== THEME TOGGLE ===== */
+function ThemeToggle({ dark, onToggle }) {
+  var C = useT();
+  return <button onClick={onToggle} title={dark?"Switch to light theme":"Switch to dark theme"} style={{
+    position:"relative", width:52, height:28, borderRadius:14, border:"none",
+    background:C.toggleBg, cursor:"pointer", outline:"none", padding:0, transition:"background 0.3s",
+  }}>
+    <span style={{
+      position:"absolute", top:3, left:dark?27:3, width:22, height:22, borderRadius:11,
+      background:C.toggleKnob, transition:"left 0.25s ease", display:"flex", alignItems:"center", justifyContent:"center", fontSize:13,
+    }}>{dark?"\u263e":"\u2600"}</span>
+  </button>;
+}
+
+/* ===== MAIN APP ===== */
+function App() {
+  var [dark,setDark] = useState(function(){ try{return localStorage.getItem("ssn-theme")==="dark"}catch(e){return false} });
+  var C = dark ? DARK : LIGHT;
+
+  React.useEffect(function(){
+    document.body.style.background = C.bg;
+    try{localStorage.setItem("ssn-theme",dark?"dark":"light")}catch(e){}
+  },[dark]);
+
+  var [a,setA] = useState({studyType:null,rnaseqGoal:null,popgenGoal:null,markerType:null,qualGoal:null,gwasDesign:null,expDesign:null,effectSize:null,microbiomeGoal:null,numGroups:"2",organism:null});
+  var s=function(k,v){setA(function(p){var n={};for(var x in p)n[x]=p[x];n[k]=v;return n})};
+  var reset=function(){setA({studyType:null,rnaseqGoal:null,popgenGoal:null,markerType:null,qualGoal:null,gwasDesign:null,expDesign:null,effectSize:null,microbiomeGoal:null,numGroups:"2",organism:null})};
+
+  var rec=useMemo(function(){return getRec(a)},[a.studyType,a.rnaseqGoal,a.popgenGoal,a.markerType,a.qualGoal,a.gwasDesign,a.expDesign,a.effectSize,a.microbiomeGoal,a.numGroups,a.organism]);
+  var done=useMemo(function(){
+    if(a.studyType==="rnaseq")return !!a.rnaseqGoal;
+    if(a.studyType==="gwas")return !!a.gwasDesign&&!!a.effectSize;
+    if(a.studyType==="popgen")return !!a.popgenGoal&&!!a.markerType;
+    if(a.studyType==="microbiome")return !!a.microbiomeGoal;
+    if(a.studyType==="experimental")return !!a.expDesign&&!!a.effectSize;
+    if(a.studyType==="qualitative")return !!a.qualGoal;
+    return false;
+  },[a.studyType,a.rnaseqGoal,a.popgenGoal,a.markerType,a.qualGoal,a.gwasDesign,a.expDesign,a.effectSize,a.microbiomeGoal]);
+
+  function NumBtn({val}){return <button onClick={function(){s("numGroups",val)}} style={{flex:1,padding:"12px 0",borderRadius:10,cursor:"pointer",border:"1.5px solid "+(a.numGroups===val?C.borderActive:C.border),background:a.numGroups===val?C.accentLight:C.surface,color:a.numGroups===val?C.accentText:C.text,fontWeight:600,fontSize:18,outline:"none"}}>{val}</button>}
+
+  return <ThemeCtx.Provider value={C}>
+    <div style={{ background:C.bg, minHeight:"100vh", fontFamily:"'Inter','Segoe UI',system-ui,-apple-system,sans-serif", padding:"42px 24px 72px", maxWidth:820, margin:"0 auto", transition:"background 0.3s" }}>
+      {/* Header */}
+      <div style={{ marginBottom:42 }}>
+        <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16 }}>
+          <div style={{ display:"flex",alignItems:"center",gap:12 }}>
+            <svg width="32" height="32" viewBox="0 0 28 28" fill="none">
+              <rect width="28" height="28" rx="7" fill={C.accent}/>
+              <path d="M8 20V10l3-3h6l3 3v10" stroke="#fff" strokeWidth="1.8" fill="none" strokeLinejoin="round"/>
+              <line x1="8" y1="15" x2="20" y2="15" stroke="#fff" strokeWidth="1.2" opacity="0.5"/>
+              <line x1="14" y1="7" x2="14" y2="20" stroke="#fff" strokeWidth="1.2" opacity="0.5"/>
+              <circle cx="11" cy="12" r="1.2" fill="#fff" opacity="0.7"/>
+              <circle cx="17" cy="18" r="1.2" fill="#fff" opacity="0.7"/>
+            </svg>
+            <span style={{ fontSize:22,fontWeight:700,color:C.text,letterSpacing:-0.3 }}>Sample Size Navigator</span>
+          </div>
+          <ThemeToggle dark={dark} onToggle={function(){setDark(!dark)}}/>
+        </div>
+        <p style={{ fontSize:17,color:C.textSecondary,lineHeight:1.6,margin:0 }}>
+          Evidence-based sample size guidance for biology, genetics, and genomics research. Select your study type to receive recommendations with traceable references.
+        </p>
+      </div>
+
+      {/* Step 1 */}
+      <div style={{ marginBottom:26 }}>
+        <Step n={1} label="Study type"/>
+        <OptionGrid options={STUDY_TYPES} value={a.studyType} onChange={function(v){reset();s("studyType",v)}} cols={2}/>
+      </div>
+
+      {a.studyType==="rnaseq"&&<React.Fragment>
+        <div style={{marginBottom:26}}><Step n={2} label="Analytical goal"/><OptionGrid options={RNASEQ_GOALS} value={a.rnaseqGoal} onChange={function(v){s("rnaseqGoal",v)}} cols={1}/></div>
+        {a.rnaseqGoal&&a.rnaseqGoal!=="scrnaseq"&&<div style={{marginBottom:26}}><Step n={3} label="Organism"/><OptionGrid options={[{id:"model",label:"Model / well-annotated genome"},{id:"non_model",label:"Non-model / limited annotation"}]} value={a.organism} onChange={function(v){s("organism",v)}} cols={2}/></div>}
+      </React.Fragment>}
+      {a.studyType==="gwas"&&<React.Fragment>
+        <div style={{marginBottom:26}}><Step n={2} label="Study design"/><OptionGrid options={GWAS_DESIGNS} value={a.gwasDesign} onChange={function(v){s("gwasDesign",v)}} cols={3}/></div>
+        {a.gwasDesign&&<div style={{marginBottom:26}}><Step n={3} label="Expected effect size"/><OptionGrid options={EFFECT_SIZES} value={a.effectSize} onChange={function(v){s("effectSize",v)}} cols={2}/></div>}
+      </React.Fragment>}
+      {a.studyType==="popgen"&&<React.Fragment>
+        <div style={{marginBottom:26}}><Step n={2} label="Analysis goal"/><OptionGrid options={POPGEN_GOALS} value={a.popgenGoal} onChange={function(v){s("popgenGoal",v)}} cols={1}/></div>
+        {a.popgenGoal&&<div style={{marginBottom:26}}><Step n={3} label="Marker type"/><OptionGrid options={MARKER_TYPES} value={a.markerType} onChange={function(v){s("markerType",v)}} cols={2}/></div>}
+      </React.Fragment>}
+      {a.studyType==="microbiome"&&<React.Fragment>
+        <div style={{marginBottom:26}}><Step n={2} label="Analysis goal"/><OptionGrid options={MICROBIOME_GOALS} value={a.microbiomeGoal} onChange={function(v){s("microbiomeGoal",v)}} cols={1}/></div>
+        {a.microbiomeGoal&&<div style={{marginBottom:26}}><Step n={3} label="Number of groups"/><div style={{display:"flex",gap:10}}><NumBtn val="2"/><NumBtn val="3"/><NumBtn val="4"/><NumBtn val="5"/></div></div>}
+      </React.Fragment>}
+      {a.studyType==="experimental"&&<React.Fragment>
+        <div style={{marginBottom:26}}><Step n={2} label="Design"/><OptionGrid options={EXP_DESIGNS} value={a.expDesign} onChange={function(v){s("expDesign",v)}} cols={2}/></div>
+        {a.expDesign&&<div style={{marginBottom:26}}><Step n={3} label="Expected effect size"/><OptionGrid options={EFFECT_SIZES} value={a.effectSize} onChange={function(v){s("effectSize",v)}} cols={2}/></div>}
+        {a.expDesign&&a.effectSize&&<div style={{marginBottom:26}}><Step n={4} label="Number of groups"/><div style={{display:"flex",gap:10}}><NumBtn val="2"/><NumBtn val="3"/><NumBtn val="4"/><NumBtn val="5"/><NumBtn val="6"/></div></div>}
+      </React.Fragment>}
+      {a.studyType==="qualitative"&&<div style={{marginBottom:26}}><Step n={2} label="Analytical approach"/><OptionGrid options={QUAL_GOALS} value={a.qualGoal} onChange={function(v){s("qualGoal",v)}} cols={1}/></div>}
+
+      {done&&rec&&<Result rec={rec}/>}
+
+      {done&&<div style={{marginTop:24}}>
+        <div style={{background:C.tagAmberBg,borderRadius:10,padding:"14px 17px",marginBottom:16,border:"1px solid rgba(154,107,30,0.15)"}}>
+          <div style={{fontSize:14,fontWeight:600,color:C.tagAmber,marginBottom:4}}>Important</div>
+          <div style={{fontSize:14,color:C.textSecondary,lineHeight:1.6}}>
+            These are evidence-based guidelines, not absolute rules. Always conduct formal power analysis when possible and document your justification in manuscripts and grant proposals.
+          </div>
+        </div>
+        <button onClick={reset} style={{width:"100%",padding:"12px 0",borderRadius:10,cursor:"pointer",border:"1.5px solid "+C.border,background:"transparent",color:C.textTertiary,fontSize:16,fontWeight:500,outline:"none",transition:"all 0.15s"}}
+          onMouseEnter={function(e){e.currentTarget.style.borderColor=C.accent;e.currentTarget.style.color=C.accent}}
+          onMouseLeave={function(e){e.currentTarget.style.borderColor=C.border;e.currentTarget.style.color=C.textTertiary}}>Start over</button>
+      </div>}
+
+      <div style={{marginTop:48,paddingTop:24,borderTop:"1px solid "+C.border,textAlign:"center"}}>
+        <div style={{fontSize:13,color:C.textTertiary,lineHeight:1.6}}>
+          Built on Wutich, Beresford & Bernard (2024, <em>IJQM</em>) and peer-reviewed genomics literature.
+          <br/>Not a substitute for formal power analysis or biostatistical consultation.
+        </div>
+      </div>
+    </div>
+  </ThemeCtx.Provider>;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
